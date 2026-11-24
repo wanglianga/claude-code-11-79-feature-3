@@ -8,6 +8,7 @@ import Eligibility from './views/Eligibility.vue'
 import Deliveries from './views/Deliveries.vue'
 import Watermarks from './views/Watermarks.vue'
 import ConsentProtocol from './views/ConsentProtocol.vue'
+import Disclosure from './views/Disclosure.vue'
 import { setAuth } from './lib/api.js'
 
 const HOST = process.env.API_HOST || '127.0.0.1'
@@ -68,7 +69,7 @@ describe('SPA renders against the live API', () => {
 
   it('Overview shows the study and the passing acceptance summary', async () => {
     const w = mountView(Overview)
-    await wait(1200)
+    await wait(2000)
     const text = w.text()
     expect(text).toContain('APEX-3')
     expect(text).toContain('PSN-A1')
@@ -110,5 +111,18 @@ describe('SPA renders against the live API', () => {
     const w = mountView(Watermarks)
     await wait(1200)
     expect(w.html()).toMatch(/CN-02/)
+  })
+
+  it('Disclosure page renders the ledger, surfaces and relation graph', async () => {
+    const w = mountView(Disclosure)
+    await wait(1600)
+    const text = w.text()
+    expect(text).toContain('Aggregate disclosure control')
+    expect(text).toContain('Frozen analysis surfaces')
+    expect(text).toContain('Release relation graph')
+    expect(text).toContain('Disclosure budget trajectory')
+    expect(text).toContain('Policy sandbox')
+    expect(w.html()).toMatch(/SURF-SAFETY-V1/)
+    expect(w.html()).toMatch(/REL-BASE-001/)
   })
 })

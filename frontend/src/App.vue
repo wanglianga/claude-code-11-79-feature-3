@@ -29,6 +29,7 @@ const navGroups = [
   {
     label: 'Governance',
     items: [
+      { to: '/disclosure', label: 'Disclosure control', title: 'Aggregate disclosure' },
       { to: '/revocation', label: 'Withdrawal', title: 'Withdrawal propagation' },
       { to: '/recovery', label: 'Recovery', title: 'Recovery & quarantine' },
       { to: '/audit', label: 'Audit trail', title: 'Audit trail' }

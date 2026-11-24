@@ -124,4 +124,79 @@ public final class Enums {
         AUDITOR,
         SPONSOR
     }
+
+    // ------------------------------------------------------------------
+    // Aggregate disclosure control vocabulary
+    // ------------------------------------------------------------------
+
+    /**
+     * Protection applied to an aggregate cell. {@code NONE} is only ever used
+     * for a cell that is already large enough; a cell below the minimum group
+     * size is always suppressed regardless of mechanism.
+     */
+    public enum DisclosureMechanism {
+        NONE,
+        SUPPRESSION,
+        ROUNDING,
+        LAPLACE,
+        CONSISTENT_RANDOM
+    }
+
+    /** Release lifecycle. BLOCKED and DEFERRED releases are recorded, not silently dropped. */
+    public enum ReleaseStatus {
+        RELEASED,
+        BLOCKED,
+        DEFERRED,
+        MERGED,
+        SANDBOX
+    }
+
+    /** How a request relates to what is already in the ledger. */
+    public enum BudgetKind {
+        NEW_QUERY,
+        NEW_DATA_INCREMENT,
+        DUPLICATE_QUERY,
+        DEFINITION_CHANGE
+    }
+
+    /** Edge vocabulary of the release relation graph. */
+    public enum RelationType {
+        SAME_SURFACE,
+        NESTED_SUBSET,
+        SUPERSET_VERSION,
+        RECODED_DIMENSION,
+        DUPLICATE,
+        SUBTRACTIVE_RISK,
+        OVERLAPPING,
+        DISJOINT
+    }
+
+    public enum RiskLevel {
+        NONE,
+        LOW,
+        MEDIUM,
+        HIGH,
+        BLOCKED
+    }
+
+    /** Cell dimensions understood by the aggregate model. */
+    public enum DimensionKind {
+        AGE_BAND,
+        CENTER_GROUP,
+        PERIOD
+    }
+
+    public enum SurfaceState {
+        ACTIVE,
+        SUPERSEDED,
+        RECODED
+    }
+
+    /** Chosen disclosure route for a study lineage. */
+    public enum DisclosureRoute {
+        /** Predefined, coarse query lattice frozen and released once; coarse but auditable. */
+        RESTRICTED_LATTICE,
+        /** Overlapping-query ledger + privacy budget + cross-version correlated perturbation. */
+        OVERLAPPING_LEDGER
+    }
 }

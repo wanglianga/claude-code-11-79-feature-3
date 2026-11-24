@@ -52,6 +52,11 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/session", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/**").hasAnyRole(ROLES)
+                        // compiling a summary table is a global-analyst / admin action; the gate still decides
+                        .requestMatchers(HttpMethod.POST, "/api/disclosure/publish").hasAnyRole("GLOBAL_ANALYST", "ADMIN")
+                        // sandbox / preview / simulate are read-shaped analyses any analyst may run
+                        .requestMatchers(HttpMethod.POST, "/api/disclosure/sandbox", "/api/disclosure/preview",
+                                "/api/disclosure/simulate").hasAnyRole(ROLES)
                         // only a global analyst (or admin) may compile cross-border deliveries
                         .requestMatchers(HttpMethod.POST, "/api/deliveries/**").hasAnyRole("GLOBAL_ANALYST", "ADMIN")
                         // only China analysts / admins may push source-side watermark ops

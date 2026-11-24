@@ -1,10 +1,16 @@
-# APEX-3 · Dual-Domain Sync & Cross-Border Egress Control
+# APEX-3 · Dual-Domain Sync, Cross-Border Egress & Aggregate Disclosure Control
 
 A platform for a multinational clinical trial that keeps China source records resident locally while letting a
 global team use **de-identified derived data** only inside an approved purpose, field, site, observation-window and
 protocol-version envelope. It implements the consent ledger, protocol catalogue, dual-domain eligibility
 evaluator, watermark/back-fill coordination, snapshot delivery compiler, withdrawal propagator and post-outage
 recovery verifier, together with the acceptance scenario for subjects A/B/C/D at analysis day 16.
+
+On top of that it implements **aggregate disclosure control** for the safety-summary tables the global statistics
+team requests (serious-AE counts by age band, centre group and protocol period). Because two individually lawful
+summaries — adjacent windows, a one-centre difference, or a re-based historical version — can be subtracted to
+isolate a small group, the platform adds a **release ledger, a cohort-overlap analyser, a differencing-attack
+simulator, a disclosure-budget evaluator and a policy sandbox**. See §9.
 
 Stack: **Vue 3 (Vite)** · **Spring Boot 3.5 / JDK** · **PostgreSQL**. Single page app is bundled into the Spring
 Boot jar and served together with the REST API.
@@ -131,30 +137,33 @@ summary and digests stay intact for audit — the delivery is not pretended to h
 
 All commands below were executed in this workspace against a live instance. Results are quoted verbatim.
 
-### 5.1 Backend integration tests — 15/15 pass
+### 5.1 Backend integration tests — 20/20 pass
 
 ```bash
 cd backend && mvn test
 ```
 ```
-Tests run: 15, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 15, Failures: 0, Errors: 0, Skipped: 0   (AcceptanceRulesTest — dual-domain rules)
+Tests run: 5,  Failures: 0, Errors: 0, Skipped: 0   (DisclosureRulesTest — aggregate disclosure)
+Tests run: 20, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS
 ```
 Covers: A/B/C/D rules; intersection semantics; both reconstruction routes agreeing (read-only and persisted);
 stale-snapshot invalidation; transport dedupe; conflicting-duplicate quarantine; withdrawal/correction race
-quarantine; delivery projection has no identity fields and survives revocation as an intact summary.
+quarantine; delivery projection has no identity fields and survives revocation as an intact summary. Plus the
+disclosure rules in §9.4.
 
-### 5.2 Frontend render tests (live backend) — 7/7 pass
+### 5.2 Frontend render tests (live backend) — 8/8 pass
 
 ```bash
 cd frontend && npm run test        # vitest + happy-dom, mounts the real views against http://127.0.0.1:8080
 ```
 ```
 Test Files  1 passed (1)
-     Tests  7 passed (7)
+     Tests  8 passed (8)
 ```
 Asserts the Overview shows **15/15**, the Acceptance cards list A1/B1/C1/D2, the Eligibility pivot renders both
-planes and subject D as Pending, and the Consent / Deliveries / Watermarks views render without error.
+planes and subject D as Pending, and the Consent / Deliveries / Watermarks / Disclosure views render without error.
 
 ### 5.3 End-to-end API acceptance (live jar)
 
@@ -193,6 +202,8 @@ Open `http://localhost:8080` and sign in (the login screen lists the demo accoun
 * **Withdrawal** — propagate a recorded withdrawal, register disposition and tie-break rules, see executions.
 * **Recovery** — recovery reports (expand for per-domain digests), simulate a post-restore re-send, resolve
   quarantined races.
+* **Disclosure control** — the aggregate release ledger, relation graph, overlap/differencing analyser,
+  differencing-attack simulator, budget trajectory and policy sandbox (see §9).
 * **Audit** — the append-only audit trail of every regulator-relevant transition.
 
 ### Try the headline flow
@@ -231,10 +242,93 @@ backend/
     service/      EligibilityEngine (pure), EligibilityService, EligibilityRunService,
                   DeliveryService, RevocationService, RecoveryService, EventIngestService,
                   StateService, AcceptanceService, AuditService
-    web/          ReadController, CommandController, SpaConfig
-    config/       SecurityConfig, DemoSeeder
-  src/test/java/com/ctrial/AcceptanceRulesTest.java
+    disclosure/   Aggregate disclosure control:
+                    CellSpace, AggregationEngine, QuerySpec      (local aggregation + suppression)
+                    AttackerModel, IntervalSolver                (public-only LP over the ledger)
+                    OverlapAnalyzer, ReleaseLedger, ReleaseSnapshot
+                    BudgetEvaluator, ConstraintTracker, AttackSimulator, PolicySandbox, PublishGate
+    web/          ReadController, CommandController, DisclosureController, SpaConfig
+    config/       SecurityConfig, DemoSeeder, DisclosureSeeder
+  src/test/java/com/ctrial/AcceptanceRulesTest.java       (15 dual-domain rules)
+  src/test/java/com/ctrial/DisclosureRulesTest.java        (5 disclosure-control rules)
 frontend/
-  src/            App, views/*, components/*, lib/api.js, lib/store.js, ui.test.js
+  src/            App, views/* (incl. Disclosure.vue), components/*, lib/api.js, lib/store.js, ui.test.js
 Dockerfile, compose.yaml
 ```
+
+---
+
+## 9. Aggregate disclosure control
+
+The global statistics team requests summary tables — serious-AE **counts** by age band, centre group and protocol
+period — at different weeks. Each table may individually satisfy the minimum-group rule, yet two lawful tables can
+be **subtracted** (adjacent windows, a one-centre difference, or a re-based historical version) to isolate a small
+group. This layer governs the *relations between* summaries, not just each summary's fields.
+
+### 9.1 The pieces
+
+| Component | What it does | Where |
+|-----------|--------------|-------|
+| **Analysis surfaces** | Freeze purpose, protocol versions, fields, observation window, watermark day and the **age recode** for a table. Two tables on one surface are comparable by construction. | `DisclosureSurface`, `DisclosureSeeder` |
+| **Aggregate engine** | Rolls local, de-identified safety subjects up into cells; tests the **enrolled denominator** against the minimum group; applies suppression first, then rounding / perturbation **only to cells that already cleared the floor**. | `AggregationEngine` |
+| **Release ledger** | Records every request — published **or** blocked — with its frozen surface, grouping dimensions, canonical filter, denominator scope, suppressed cells, mechanism, result version and budget. Stores **aggregates + a one-way membership digest**, never subject-level members. | `DisclosureRelease`, `DisclosureCell`, `ReleaseLedger` |
+| **Relation graph** | Directed edges between releases: SAME_SURFACE, NESTED_SUBSET, SUPERSET_VERSION, RECODED_DIMENSION, DUPLICATE, SUBTRACTIVE_RISK, OVERLAPPING, DISJOINT — plus COMPARABILITY edges for recoded surfaces. | `OverlapAnalyzer`, `ReleaseRelation` |
+| **Overlap analyser** | Computes containment / intersection / **difference** of cohorts locally and flags any pair whose difference isolates a residual cell below the floor. Deterministic rounding is treated as **exact** (it cancels in a subtraction — never credited as protection). | `OverlapAnalyzer` |
+| **Attack simulator** | Builds the attacker's world from **published tables + public enrolment + public totals only** and, via linear programming, enumerates each *suppressed* group's derivable count interval. Never reads local unpublished detail. | `AttackerModel`, `IntervalSolver`, `AttackSimulator` |
+| **Constraint tracker** | Connected components of releases sharing atoms; records each suppressed group an attacker can pin or narrow to width ≤ 1 as a finding. | `ConstraintTracker`, `ConstraintFinding` |
+| **Budget evaluator** | Merges cumulative loss on a face and distinguishes **NEW_QUERY**, **NEW_DATA_INCREMENT** (later watermark re-charges overlapping members — a version is *not* a new population), **DUPLICATE_QUERY** and **DEFINITION_CHANGE** (a recode opens a comparability edge instead of reusing budget). | `BudgetEvaluator`, `BudgetTrace` |
+| **Policy sandbox** | Shows, for a request, the effect of **defer / merge cells / consistent perturbation / refuse** on which questions are answerable and what intervals remain inferable. | `PolicySandbox` |
+| **Publish gate** | Refuses a request when **any** of: its own suppressed group becomes recoverable, a same-surface one-centre difference would isolate it, or the cumulative budget would exceed its cap. Every request is written to the ledger either way. | `PublishGate` |
+
+### 9.2 The scenarios it must catch (all exercised)
+
+1. **One-centre difference with identical deterministic rounding** — two same-shape tables on one surface that
+   differ only in CN-02 are marked **SUBTRACTIVE_RISK**; the analyser notes "rounding cancels and does NOT protect".
+   Seeded as `REL-BASE-001` (all sites) vs `REL-BASE-002` (without CN-02).
+2. **Suppressed cell + public total** — a period-level table suppresses CN-02 age-C cells (denominator 2/2/1 < 5),
+   but the public `CN-02|P1` total pins `CN-02|C|P1` to **exactly 1**. The simulator exposes it and the gate refuses
+   the request. Seeded cautionary baseline: `REL-BASE-LEGACY` (a pre-gate table that leaked); any *new* period-level
+   request on the same surface is now **BLOCKED**.
+3. **Watermark increment is not a new population** — a same-shape table on a later-day surface (V1→V2) is classified
+   **NEW_DATA_INCREMENT**; the overlapping members are re-charged, and the simulator links calendar versions with
+   monotone (non-decreasing) constraints so a later table is an increment, never an independent cohort.
+4. **Purpose recode → comparability edge** — `SURF-SAFETY-V3` folds ages into `18-64`/`65+`; its releases carry
+   `comparableTo=SURF-SAFETY-V2` and are classified **DEFINITION_CHANGE**, never reusing V2's budget.
+
+### 9.3 REST API (read for any role; publish = global/admin)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/disclosure/surfaces` | Frozen surfaces incl. public totals and comparability edges |
+| GET | `/api/disclosure/releases`, `/releases/{code}` | Ledger and one entry incl. cells |
+| GET | `/api/disclosure/graph` | Nodes + typed edges (incl. comparability) |
+| GET | `/api/disclosure/overlap` | Pairwise relations, subtractive pairs, constraint findings |
+| GET | `/api/disclosure/budget` | Budget traces and cumulative loss per lineage |
+| GET | `/api/disclosure/simulations` | Persisted attack simulations |
+| POST | `/api/disclosure/simulate` | Run + persist a differencing simulation |
+| POST | `/api/disclosure/preview` · `/publish` | Dry-run / commit a request through the gate |
+| POST | `/api/disclosure/sandbox` | Defer / merge / perturb / refuse comparison |
+
+### 9.4 Verification (executed in this workspace against a live instance)
+
+Backend integration tests — **20/20 pass** (`mvn test`): the existing 15 dual-domain rules plus 5 disclosure rules
+(`DisclosureRulesTest`): period-pooled cells clear the floor while period-level CN-02 age-C cells are suppressed;
+the public-total join recovers a suppressed group and is blocked; a one-centre difference under deterministic
+rounding is `SUBTRACTIVE_RISK`; a later watermark is `NEW_DATA_INCREMENT` with repeated members re-charged; the
+recoded surface opens a comparability edge.
+
+Live end-to-end (cap 3.0):
+
+| Step | Result |
+|------|--------|
+| `POST /api/disclosure/publish` period-level FINE on V1 | **blocked=true** — "a suppressed small group of this request is pinned by public information alone" |
+| publish pooled age×centre FINE on V1 | **RELEASED** (e.g. `REL-SAFETY-COHORT-2026-004`), 9 cells, 0 suppressed |
+| publish the same shape on V2 (later watermark) | **RELEASED**, `budgetKind=NEW_DATA_INCREMENT` |
+| publish a pool on the recoded V3 | **RELEASED**, `comparableTo=SURF-SAFETY-V2`, `DEFINITION_CHANGE` |
+| `GET /api/disclosure/overlap` | `subtractivePairs=1` (REL-BASE-001 ⊕ REL-BASE-002), 1 constraint finding `[1,1]` |
+| `POST /api/disclosure/simulate {surfaceCode: SURF-SAFETY-V1}` | BLOCKED — `AGE_BAND=C;CENTER_GROUP=CN-02;PERIOD=P1 ∈ [1,1]` |
+| `POST /api/disclosure/sandbox` (period-level FINE, V1) | PUBLISH_AS_IS withheld; MERGE / PERTURB answerable; REFUSE withholds all |
+
+Frontend render tests — **8/8 pass** (`npm run test`, live backend), including the new Disclosure view rendering the
+surfaces, relation graph, ledger and sandbox.
+
